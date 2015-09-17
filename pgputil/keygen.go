@@ -30,6 +30,7 @@ func PGPConfig() *packet.Config {
 		DefaultCompressionAlgo: packet.CompressionZLIB,
 		DefaultHash:            hash,
 		RSABits:                rsaBits,
+		S2KCount:               65536,
 	}
 }
 
