@@ -1,3 +1,7 @@
+// Package pgputil contains functions that are useful for generating
+// OpenPGP keys where a name and comment should be applied to a number
+// of email addresses. This is useful for generating a personal key
+// that should be applied to a number of email address identities.
 package pgputil
 
 import (
@@ -19,6 +23,8 @@ var (
 	hash    = crypto.SHA512
 )
 
+// PGPConfig returns a sane set of defaults: zlib compression, SHA512,
+// and 4096-bit RSA keys.
 func PGPConfig() *packet.Config {
 	return &packet.Config{
 		DefaultCompressionAlgo: packet.CompressionZLIB,
@@ -33,19 +39,35 @@ func newSignature() *packet.Signature {
 	}
 }
 
+// A Key stores metadata that is used to generate keys.
 type Key struct {
 	Name    string   `json:"name"`
 	Comment string   `json:"comment"`
 	UIDs    []string `json:"uids"`
 }
 
+// A Keypair stores serialised keys for export.
 type Keypair struct {
 	Comment string
 	Private *bytes.Buffer
 	Public  *bytes.Buffer
 }
 
+// PGPID returns an OpenPGP identity (e.g. UID) for the email. The
+// email must be one of the emails present in the UIDs field.
 func (k *Key) PGPID(email string) *openpgp.Identity {
+	var found bool
+	for i := range k.UIDs {
+		if k.UIDs[i] == email {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return nil
+	}
+
 	uid := packet.NewUserId(k.Name, k.Comment, email)
 	if uid == nil {
 		return nil
@@ -55,10 +77,8 @@ func (k *Key) PGPID(email string) *openpgp.Identity {
 	if comment != "" {
 		comment = "(" + comment + ") "
 	}
-	name := fmt.Sprintf("%s %s<%s>", k.Name, email, comment)
-	fmt.Println("comment:", comment)
-	fmt.Println("email:", email)
 
+	name := fmt.Sprintf("%s %s<%s>", k.Name, comment, email)
 	return &openpgp.Identity{
 		Name:          name,
 		UserId:        uid,
@@ -81,6 +101,9 @@ func generateSubkey() (*openpgp.Subkey, error) {
 	}, nil
 }
 
+// Generate creates a new OpenPGP key from metadata. Due to
+// limitations in the OpenPGP library, these keys are unprotected and
+// must have a password applied using the GPG tool.
 func (k *Key) Generate() (*openpgp.Entity, error) {
 	primaryID := k.UIDs[0]
 	subIDs := k.UIDs[1:]
@@ -98,12 +121,10 @@ func (k *Key) Generate() (*openpgp.Entity, error) {
 	}
 
 	for _, id := range subIDs {
-		log.Println(id)
 		uid := k.PGPID(id)
 		if nil == uid {
 			return nil, errors.New("invalid identity")
 		}
-		log.Printf("%#v", uid)
 		ent.Identities[uid.Name] = uid
 	}
 
@@ -123,3 +144,7 @@ func (k *Key) Generate() (*openpgp.Entity, error) {
 	ent.Subkeys = []openpgp.Subkey{*cryptkey}
 	return ent, nil
 }
+
+// New generates a new key with the supplied metadata, and signs it
+// with the provided identity key. If the predecessor key is not nil,
+// it will also be used to sign the key to provide continuity.
